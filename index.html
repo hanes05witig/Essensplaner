@@ -290,7 +290,8 @@ const DEF={onboarded:false,step:0,shops:[],budget:75,vibes:[],diets:[],people:2,
 let S=load();
 if(S.links&&S.links.length){S.links.forEach((l,j)=>S.custom.push({id:'c'+Date.now()+j,src:'ck',url:l.u,n:l.n,e:'👨‍🍳',t:null,v:[],gf:0,lf:0,min:0,kcal:0,pr:0,a:[],x:[],i:[],s:[],pp:3}));S.links=[];save()}
 function load(){try{const s=JSON.parse(localStorage.getItem(KEY));return s?{...DEF,...s}:{...DEF}}catch(e){return {...DEF}}}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+let storageOK=true;
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S));storageOK=localStorage.getItem(KEY)!==null}catch(e){storageOK=false}}
 const $=s=>document.querySelector(s);
 const eur=v=>v.toLocaleString('de-DE',{style:'currency',currency:'EUR'});
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -302,9 +303,25 @@ const recById=id=>allRecipes().find(r=>r.id===id);
 function factor(){const f=S.shops.map(k=>SHOPS.find(s=>s.k===k)?.f).filter(Boolean);return f.length?Math.min(...f):1}
 function cost(r){return (r.pp!=null?r.pp:r.i.reduce((a,x)=>a+x[3],0))*S.people*factor()}
 const EN={'pilze':['mushroom'],'meeresfrüchte':['prawn','shrimp','mussel','clam','squid','crab','lobster','oyster','scallop'],'erdnüsse':['peanut'],'nüsse':['nut','almond','cashew','walnut','pecan','hazelnut','pistachio'],'oliven':['olive'],'sardellen':['anchov'],'koriander':['coriander','cilantro'],'aubergine':['aubergine','eggplant'],'blauschimmelkäse':['blue cheese','stilton','gorgonzola','roquefort'],'leber':['liver'],'tofu':['tofu'],'garnelen':['prawn','shrimp'],'ei':['egg'],'sellerie':['celery'],'sesam':['sesame','tahini'],'senf':['mustard'],'paprika':['bell pepper','red pepper','green pepper','paprika'],'zwiebeln':['onion','shallot']};
-function avoidHit(r){
+function avoidTerm(r){
   const low=S.avoid.map(a=>a.toLowerCase()).flatMap(a=>[a,...(EN[a]||[])]);
-  return low.some(a=>r.x.some(x=>x.includes(a)||a.includes(x))||r.i.some(i=>i[0].toLowerCase().includes(a))||r.n.toLowerCase().includes(a));
+  const re=a=>new RegExp('(^|[^a-zäöüß])'+a.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i');
+  const hay=[r.n,...r.i.map(i=>i[0])];
+  for(const a of low){if(r.x.includes(a)||hay.some(t=>re(a).test(t)))return a}
+  return null;
+}
+function avoidHit(r){return !!avoidTerm(r)}
+function whyNot(r){
+  const w=[];
+  if(!r.t){w.push('Die Art fehlt (Fleisch, Fisch, vegetarisch oder vegan).');return w}
+  const types=S.diets.filter(d=>['meat','veggie','vegan','fish'].includes(d));
+  if(types.length&&!dietOK({...r,gf:1,lf:1}))w.push('Passt nicht zu deiner Ernährung ('+types.map(k=>DIETS.find(d=>d.k===k).n).join(', ')+').');
+  if(S.diets.includes('gf')&&!r.gf)w.push('Du hast „Glutenfrei“ gewählt, das Rezept ist nicht als glutenfrei markiert.');
+  if(S.diets.includes('lf')&&!r.lf)w.push('Du hast „Laktosefrei“ gewählt, das Rezept ist nicht als laktosefrei markiert.');
+  const t=avoidTerm(r);if(t)w.push('Enthält „'+t+'“ von deiner Ausschlussliste.');
+  if(!filterOK(r))w.push('Der Filter oben steht auf „'+(S.filter==='meat'?'Mit Fleisch':'Vegetarisch')+'“.');
+  if(!applOK(r))w.push('Braucht '+r.a.map(a=>APPL[a]).join(', ')+'.');
+  return w;
 }
 function dietOK(r){
   if(!r.t)return false;
@@ -400,6 +417,7 @@ function kitchenSVG(){
 /* ---------- Render ---------- */
 function render(){
   const app=$('#app');
+  setTimeout(()=>{let w=document.getElementById('stwarn');if(!storageOK&&!w){w=document.createElement('div');w.id='stwarn';w.className='err';w.style.cssText='position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:12px;right:12px;z-index:40';w.textContent='Speichern ist hier blockiert. Öffne die App über deine GitHub-Adresse in Safari (nicht als Datei und nicht im privaten Modus).';document.body.appendChild(w)}},0);
   if(S.edit!==null)return renderStep(app,S.edit,true);
   if(!S.onboarded)return renderStep(app,S.step,false);
   renderMain(app);
@@ -432,17 +450,18 @@ function renderMain(app){
   if(S.tab==='recipes'){
     h=`<div class="head"><h1>Rezepte</h1></div><div class="seg" role="group" aria-label="Ansicht">${[['mine','Meine Sammlung'],['discover','Entdecken']].map(([k,n])=>`<button class="${S.rtab===k?'on':''}" data-a="rtab" data-k="${k}">${n}</button>`).join('')}</div><br>`;
     if(S.rtab==='mine'){
-      let list=allRecipes().filter(r=>filterOK(r)&&dietOK(r)&&!avoidHit(r));
+      let list=allRecipes().filter(r=>r.src==='ck'||(filterOK(r)&&dietOK(r)&&!avoidHit(r)));
       if(S.onlyFav)list=list.filter(r=>S.favs.includes(r.id));
       list.sort((x,y)=>(S.favs.includes(y.id)-S.favs.includes(x.id)));
       h+=filterSeg()+` <button class="chip ${S.onlyFav?'on':''}" data-a="onlyfav" style="margin-left:4px">♥ Nur gemerkte</button>`;
-      h+=list.length?list.map(r=>`<button class="meal" data-a="open" data-k="${r.id}">${icon(r)}<div style="min-width:0"><div class="n">${esc(r.n)}${S.favs.includes(r.id)?' ♥':''}</div><div class="m">${meta(r)}${applOK(r)?'':' · braucht '+r.a.map(a=>APPL[a]).join(', ')}</div></div><div class="p">${eur(cost(r))}</div></button>`).join(''):'<div class="empty">Kein Rezept passt zu diesem Filter.</div>';
+      h+=list.length?list.map(r=>`<button class="meal" data-a="open" data-k="${r.id}">${icon(r)}<div style="min-width:0"><div class="n">${esc(r.n)}${S.favs.includes(r.id)?' ♥':''}</div><div class="m">${meta(r)}${whyNot(r).length?' · ⚠️ nicht in Planung':''}</div></div><div class="p">${eur(cost(r))}</div></button>`).join(''):'<div class="empty">Kein Rezept passt zu diesem Filter.</div>';
       const ck=S.custom.filter(r=>r.src==='ck'&&!r.t);
       if(ck.length)h+=`<h4>Noch zu vervollständigen</h4><p class="note">Diese Chefkoch-Rezepte kommen erst in die Planung, wenn du die Art angibst.</p>${ck.map(r=>`<button class="meal" data-a="open" data-k="${r.id}">${icon(r)}<div style="min-width:0"><div class="n">${esc(r.n)}</div><div class="m">Art fehlt – antippen</div></div></button>`).join('')}`;
       h+=`<h4>Chefkoch-Rezept hinzufügen</h4>
       <div class="row"><input class="inp" id="ckn" placeholder="Name, z. B. Omas Gulasch"></div>
       <div class="row" style="margin-top:10px"><input class="inp" id="cku" placeholder="Link von Chefkoch einfügen" inputmode="url"></div>
       <div class="chips" style="margin-top:12px" id="ckt">${[['meat','Mit Fleisch'],['fish','Fisch'],['veggie','Vegetarisch'],['vegan','Vegan']].map(([k,n])=>`<button class="chip" data-a="cktype" data-k="${k}">${n}</button>`).join('')}</div>
+      <div class="chips" style="margin-top:10px" id="ckf"><button class="chip" data-a="ckflag" data-k="gf">🌾 Glutenfrei</button><button class="chip" data-a="ckflag" data-k="lf">🥛 Laktosefrei</button></div>
       <div class="pin"><label for="ckp">Preis pro Person (€)</label><input id="ckp" type="number" step="0.1" min="0" value="3"></div>
       <textarea class="inp" id="cki" rows="4" style="margin-top:12px;height:auto;padding:14px 20px;resize:vertical" placeholder="Zutaten (optional, eine pro Zeile) – landen auf der Einkaufsliste"></textarea>
       <button class="btn g" style="margin-top:12px" data-a="ckadd">Zur Sammlung hinzufügen</button>`;
@@ -488,7 +507,9 @@ function openRecipe(arg){
   <div class="stats">${r.min?`<span>⏱ ${r.min} Min</span>`:''}${r.kcal?`<span>🔥 ${r.kcal} kcal</span>`:''}${r.pr?`<span>💪 ${r.pr} g Protein</span>`:''}<span>💶 ca. ${eur(cost(r))} für ${S.people}</span></div>
   ${mdbR?`<div class="pin"><label for="ppin">Preis pro Person (€)</label><input id="ppin" type="number" step="0.1" min="0" value="${r.pp}"></div><p class="note">Geschätzt – pass ihn an, damit dein Budget stimmt.</p>`:''}
   ${r.src==='ck'?'':`<h3>Zutaten ${mdbR?'(Original, ca. 4 Portionen)':`für ${S.people} ${S.people===1?'Person':'Personen'}`}</h3>${r.i.map(([n,q,u])=>`<div class="ing"><span>${esc(n)}</span><span>${q==null?esc(u):fmtQ(Math.round(q*S.people*100)/100,u)}</span></div>`).join('')}`}
-  ${r.src==='ck'?`<h3>Art</h3><div class="chips">${[['meat','Mit Fleisch'],['fish','Fisch'],['veggie','Vegetarisch'],['vegan','Vegan']].map(([k,n])=>`<button class="chip ${r.t===k?'on':''}" data-ckt="${k}">${n}</button>`).join('')}</div><div class="pin"><label for="ppin">Preis pro Person (€)</label><input id="ppin" type="number" step="0.1" min="0" value="${r.pp}"></div>
+  ${(()=>{if(!saved)return '';const w=whyNot(r);return w.length?`<div class="err" style="font-weight:500"><b>Kommt gerade nicht in die Planung:</b><br>${w.map(esc).join('<br>')}</div>`:''})()}
+  ${saved&&S.plan&&S.plan.length&&!whyNot(r).length?`<h3>Fest einplanen</h3><div class="chips">${S.plan.map((p,i)=>`<button class="chip ${p.id===r.id?'on':''}" data-plan="${i}">${DAYS[p.d]}</button>`).join('')}</div><p class="note">Tauscht das Gericht an diesem Tag aus – nur wenn's ins Budget passt.</p>`:''}
+  ${r.src==='ck'?`<h3>Art</h3><div class="chips">${[['meat','Mit Fleisch'],['fish','Fisch'],['veggie','Vegetarisch'],['vegan','Vegan']].map(([k,n])=>`<button class="chip ${r.t===k?'on':''}" data-ckt="${k}">${n}</button>`).join('')}</div><div class="chips" style="margin-top:10px"><button class="chip ${r.gf?'on':''}" data-ckf="gf">🌾 Glutenfrei</button><button class="chip ${r.lf?'on':''}" data-ckf="lf">🥛 Laktosefrei</button></div><div class="pin"><label for="ppin">Preis pro Person (€)</label><input id="ppin" type="number" step="0.1" min="0" value="${r.pp}"></div>
   <h3>Zutaten</h3><textarea class="inp" id="ckedit" rows="5" style="height:auto;padding:14px 20px;width:100%;resize:vertical" placeholder="Eine Zutat pro Zeile">${esc(r.i.map(x=>x[0]).join('\n'))}</textarea>
   <a class="btn ck-btn" style="display:inline-flex;align-items:center;text-decoration:none;margin-top:14px" href="${esc(r.url)}" target="_blank" rel="noopener">Rezept auf Chefkoch öffnen ↗</a>`:`<h3>Zubereitung</h3><ol class="steps">${r.s.map(x=>`<li>${esc(x)}</li>`).join('')}</ol>`}
   <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">${r.src==='ck'?'':`<a class="btn ck-btn" style="display:inline-flex;align-items:center;text-decoration:none" href="${chefUrl(r.n)}" target="_blank" rel="noopener">Ähnliches auf Chefkoch ↗</a>`}
@@ -501,6 +522,12 @@ function openRecipe(arg){
     }
     const ct=e.target.closest('[data-ckt]');
     if(ct){r.t=ct.dataset.ckt;save();render();openRecipe(r.id);return}
+    const cf=e.target.closest('[data-ckf]');
+    if(cf){r[cf.dataset.ckf]=r[cf.dataset.ckf]?0:1;save();render();openRecipe(r.id);return}
+    const pl=e.target.closest('[data-plan]');
+    if(pl){const i=+pl.dataset.plan,old=recById(S.plan[i].id),nt=planTotal()-(old?cost(old):0)+cost(r);
+      if(nt>S.budget){toast('Dann wären es '+eur(nt)+' – über deinem Budget von '+eur(S.budget)+'.');return}
+      S.plan[i].id=r.id;S.checked={};save();render();openRecipe(r.id);toast('Eingeplant für '+DAYS[S.plan[i].d]+'.');return}
     if(e.target.closest('[data-del]')){S.custom=S.custom.filter(x=>x.id!==r.id);S.favs=S.favs.filter(x=>x!==r.id);if(S.plan)S.plan=S.plan.filter(p=>p.id!==r.id);save();el.remove();render()}
   };
   const ce=el.querySelector('#ckedit');
@@ -567,12 +594,14 @@ document.addEventListener('click',e=>{
     case 'mdbrandom':(async()=>{try{const ms=await mdbFetch('random.php');if(ms[0])openRecipe(mdbToRecipe(ms[0]))}catch(e){toast('TheMealDB ist gerade nicht erreichbar.')}})();return;
     case 'mdbopen':mdbOpen(k);return;
     case 'cktype':document.querySelectorAll('#ckt .chip').forEach(c=>c.classList.toggle('on',c===b));return;
+    case 'ckflag':b.classList.toggle('on');return;
     case 'ckadd':{const n=$('#ckn').value.trim(),u=$('#cku').value.trim(),t=document.querySelector('#ckt .chip.on')?.dataset.k;
       if(!n){toast('Gib dem Rezept einen Namen.');return}
       if(!/^https?:\/\//i.test(u)){toast('Füg einen vollständigen Link ein (beginnt mit https://).');return}
       if(!t){toast('Wähl aus, ob mit Fleisch, Fisch, vegetarisch oder vegan.');return}
       const i=$('#cki').value.split('\n').map(x=>x.trim()).filter(Boolean).map(x=>[x,null,'',0]);
-      const r={id:'c'+Date.now(),src:'ck',url:u,n,e:'👨‍🍳',t,v:[],gf:0,lf:0,min:0,kcal:0,pr:0,a:[],x:[],i,s:[],pp:Math.max(0,+$('#ckp').value||0)};
+      const fl=k=>document.querySelector('#ckf [data-k='+k+']').classList.contains('on')?1:0;
+      const r={id:'c'+Date.now(),src:'ck',url:u,n,e:'👨‍🍳',t,v:[],gf:fl('gf'),lf:fl('lf'),min:0,kcal:0,pr:0,a:[],x:[],i,s:[],pp:Math.max(0,+$('#ckp').value||0)};
       S.custom.push(r);S.favs.push(r.id);save();render();toast('Gespeichert – kommt ab jetzt in die Planung.');return}
     case 'reset':if(confirm('Wirklich alle Einstellungen, Pläne und KI-Rezepte löschen?')){S={...DEF}}break;
     case 'export':{const t=JSON.stringify(S);try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'application/json'}));a.download='essensplaner-backup.json';a.click();toast('Backup-Datei gespeichert.');return}catch(e){}(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('Daten kopiert – füg sie z. B. in eine Notiz ein.'),()=>prompt('Diesen Text kopieren:',t));return}
